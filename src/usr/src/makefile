@@ -1,6 +1,6 @@
 #新增的.o文件都要在.phony里注册，这样它才会被编译
 cc=gcc
-cflags=-I../include/ -Wall -fno-builtin -std=c99
+cflags=-I../include/ -Wall -fno-builtin -std=c99 -m32
 asmflags=-I../include/
 asm=nasm
 all:sys_call.o utils.o asmtask.o

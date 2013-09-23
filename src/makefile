@@ -1,5 +1,5 @@
 cc=gcc
-cflags=-I../include/ -I./usr/include/ -Wall -fno-builtin -g -O0
+cflags=-I../include/ -I./usr/include/ -Wall -fno-builtin -g -O0 -m32
 asmflags=-I../include/ -I./usr/include/
 #$(usro)
 usro= usr/lib/asmtask.o usr/lib/sys_call.o usr/lib/utils.o
@@ -13,8 +13,8 @@ all:../bin/boot.bin ../bin/kernel.elf
 .PHONY:all
 
 ../bin/kernel.elf:$(kernelRelyO) 
-	ld  -s  -Ttext 0x30400  -o ../bin/kernel.elf $(kernelRelyO);\
-	ld -Ttext 0x30400 -o ../bin/g_kernel.elf $(kernelRelyO)
+	ld -m elf_i386  -s  -Ttext 0x30400  -o ../bin/kernel.elf $(kernelRelyO);\
+	ld -m elf_i386  -Ttext 0x30400 -o ../bin/g_kernel.elf $(kernelRelyO)
 
 ../lib/mm.o:mm.c ../include/mm.h 
 	$(cc) -c -o ../lib/mm.o  mm.c $(cflags) -std=c99
@@ -66,6 +66,9 @@ all:../bin/boot.bin ../bin/kernel.elf
 
 ../lib/proc.o:proc.c ../include/proc.h ../include/utils.h ../include/kbd_drv.h ../include/mm.h
 	$(cc)  -c -o ../lib/proc.o proc.c  -std=c99 $(cflags)
+
+../lib/debug.o:debug.c ../include/debug.h ../include/utils.h ../include/disp.h
+	$(cc)  -c -o ../lib/debug.o debug.c  -std=c99 $(cflags)
 
 ../bin/boot.bin:boot.asm $(asmHeader)
 	$(asm)  -o ../bin/boot.bin boot.asm   $(asmflags)
