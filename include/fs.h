@@ -63,7 +63,8 @@ int askfs(int command,
 		);
 
 #define MAX_FD 30
-FILE_DESC fd_table[MAX_FD];
+
+extern FILE_DESC fd_table[MAX_FD];
 
 /**global partation information of all devices*/
 #define MAX_DEVICE 5
@@ -82,4 +83,6 @@ boolean mount(char*mountpoint,short device,short partation);
 int new_fd(void);
 FS_COMMAND* new_cmd(void);
 void releasefd(int fd);
+boolean is_fd_valid(int fd, int command);
+
 #endif

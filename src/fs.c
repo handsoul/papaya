@@ -1,7 +1,7 @@
 /**
   *why we need a fs layer?
   *1  it is a virtual layer of different filesystem,and it will solve common filesystem requests.
-  *2  if needed,it will make the choice which filesystem to call
+  *2  if needed,it will make the choice which filesystem driver to call
   *3  sometimes,it communicates with fs_xx-layer to finish one job,we take open() as example:fs creates a file-desc and do some initialization,
   *and let fs_xx-layer finish the remaining job.
   */
@@ -11,23 +11,40 @@
 #include<disp.h>
 #include<proc.h>
 #define MAX_CMD 10
-static FS_COMMAND empty_cmds[MAX_CMD]; 
+
+
+FILE_DESC fd_table[MAX_FD];
+
+static FS_COMMAND empty_cmds[MAX_CMD];//use to store unfinished fs req 
 #define MAX_MOUNT_INFO 20
 static MOUNT_INFO mountinfo[MAX_MOUNT_INFO];
+
+
 /**
 1,receive massive arguments,because it will be called by k_open,k_read,k_write,k_colse.
 2,choose which filesystem  to call by parsing fd
 3,if COMMAND_OPEN,argument 'fd' will be pre-set,as you see within body of if(command==COMMAND_OPEN),that 'fd=new fd'
 */
+
 int askfs(int command,
 		char* path,int flags,					/**open(char*path,int flag,int mod); */
 		int fd,char*addr,int size,			/**write/read(int fd,char*addr,int size); */
 		int offset,int whence							/**lseek(int fd,int offset,int whence)*/
 		){
-	FS_COMMAND*cmd=new_cmd();
+	/*
+	 *FIXME:maybe fd should be validated first ? 
+	 * */
+	if(false == is_fd_valid(fd,command) )
+	{
+	    oprintf("kernel error:@ fd not valid\n");
+	    SYSCALL_RET(-1,2);// I'm not sure about the meaning of these reture code, assuming that -1 means syscall return a failure with error code = 2
+	}
+
+	FS_COMMAND*cmd=new_cmd();//allocate a new fs sys-call
+
 	if(!cmd){
-		oprintf("kernel error:@fs empty_cmds used out\n");
-		SYSCALL_RET(-1,2);
+		oprintf("kernel error:@fs empty_cmds used out,fs sub-system might be busy\n");
+		SYSCALL_RET(-1,2);//we should return a FS_ERROR_BUSY
 	}
 	if(command==COMMAND_CLOSE){
 		fd_table[fd].device=DEVICE_NULL;
@@ -37,7 +54,7 @@ int askfs(int command,
 		oprintf("@fs handle COMMAND_SEEK..\n");
 		int newseek=-1;
 		switch(whence){
-			case 0:
+			case 0: 
 				oprintf("case0 cmd.offset=%u\n",offset);
 				newseek=offset;
 				break;
@@ -48,6 +65,7 @@ int askfs(int command,
 				newseek=fd_table[fd].filesize-1+offset;
 				break;
 			default:
+				break; //FIXME: without break, wouldn't an endless cycle be generated here when case fall to default?
 				;//if you pass a bad location-flag,'newseek' will not be touched and keeps being -1
 		}
 		if(newseek>=0){
@@ -97,6 +115,9 @@ int askfs(int command,
 	cmd->command=command;
 	
 	FILE_DESC*pfd=fd_table+fd;	
+
+	//finally , command from userspace comes down here, get handled by specific file-system module such as ext/ntfs/extfat
+	
 	switch(g_dp[pfd->device][pfd->partation].sys_id){
 		case SYSID_LINUX:
 			cmd->handler_pid=FS_EXT_PID;
@@ -116,11 +137,21 @@ int askfs(int command,
 			oprintf("askfs:unknown partation partition sys_id...\n");
 			return 0;
 	}
+
+	//FIXME:
+	//some routins might not return correctly when all work's done
+	return 0;//again I'm not sure about the return code
 }
 //bug:empty_cmds should be all 0 at first,but it proved to not
 void init_fs(void){
+
 	for(int i=0;i<MAX_CMD;i++) empty_cmds[i].command=COMMAND_NULL;
+
+	//FIXME: I didn't see the fd_table been initialized
+	for( int i = 0; i < MAX_FD ; i++) fd_table[i].device = DEVICE_NULL;
 }
+
+//TODO: faster ways might be used here to get avaliable fd ?
 int new_fd(void){
 	int i;
 	for(i=0;i<MAX_FD;i++){
@@ -130,6 +161,7 @@ int new_fd(void){
 	if(i>=MAX_FD) return -1;
 	return i;
 }
+
 void releasefd(int fd){
 	fd_table[fd].device=DEVICE_NULL;
 }
@@ -170,13 +202,16 @@ FS_COMMAND* new_cmd(void){
 	return empty_cmds+i;
 }
 
-
-
-
-
-
-
-
-
-
-
+boolean is_fd_valid(int fd, int command)
+{
+    //TODO: add something here.
+    if(fd < 0)
+	return false;
+    else if( fd >= MAX_FD)
+	return false;
+    else if((fd_table[fd].device == DEVICE_NULL) &&
+	    (command != COMMAND_OPEN))
+	return false;
+    
+    return true;
+}
