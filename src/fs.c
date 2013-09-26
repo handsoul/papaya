@@ -13,14 +13,17 @@
 #define MAX_CMD 10
 
 
+DP g_dp[MAX_DEVICE][MAX_PARTATION];
 FILE_DESC fd_table[MAX_FD];
 
 static FS_COMMAND empty_cmds[MAX_CMD];//use to store unfinished fs req 
 #define MAX_MOUNT_INFO 20
+
+/*all mount point infomation is maintained here */
 static MOUNT_INFO mountinfo[MAX_MOUNT_INFO];
 
 
-/**
+/*
 1,receive massive arguments,because it will be called by k_open,k_read,k_write,k_colse.
 2,choose which filesystem  to call by parsing fd
 3,if COMMAND_OPEN,argument 'fd' will be pre-set,as you see within body of if(command==COMMAND_OPEN),that 'fd=new fd'
@@ -66,7 +69,7 @@ int askfs(int command,
 				break;
 			default:
 				break; //FIXME: without break, wouldn't an endless cycle be generated here when case fall to default?
-				;//if you pass a bad location-flag,'newseek' will not be touched and keeps being -1
+				       //if you pass a bad location-flag,'newseek' will not be touched and keeps being -1
 		}
 		if(newseek>=0){
 			fd_table[fd].seek=newseek;
@@ -78,25 +81,32 @@ int askfs(int command,
 		/**
 		  *what does an 'open' do?		---it create a file-desc for target file.
 		  *this job was finished by two steps:
-		  *1,at fs-layer(namely fs.c),file-desc's member 'flags','device','partation','seek' are initialized.of course,fs-layer can not get inode.
+		  *1,at fs-layer(namely fs.c),file-desc's member 'flags','device','partition','seek' are initialized.of course,fs-layer can not get inode.
 		  *so she pass shortpath to fs_xx_layer(namely fs_ext.c and so on).
 		  *2,at fs_xx_layer,'shortpath' will be used to get 'inode' of file-desc.thus,a good file-desc is created and open() is done.
 		  */
 		fd=new_fd();
 		if(fd==-1){
-			oprintf("kernel error:@fs file-desc used out\n");
+			oprintf("kernel error:@fs file-desc runs out\n");
 			SYSCALL_RET(-1,2);
 		}
+
 		fd_table[fd].flags=flags;
 		fd_table[fd].seek=0;
 		int i;
+
+		//validate file path and dispatch 'open' command to lower layer.
 		for(i=0;i<MAX_MOUNT_INFO;i++){
-			oprintf("mountpoint:%s,device:%u,partation:%u\n",mountinfo[i].mountpoint,mountinfo[i].device,mountinfo[i].partation);
+
+			oprintf("mountpoint:%s,device:%u,partition:%u\n",
+				mountinfo[i].mountpoint,mountinfo[i].device,mountinfo[i].partition);
 			if(!strmatch(mountinfo[i].mountpoint,path)) continue;
 			fd_table[fd].device=mountinfo[i].device;
-			fd_table[fd].partation=mountinfo[i].partation;
-			/**pass shortpath to fs_xx,fs-layer can not get inode */
-			cmd->shortpath=path+strlen(mountinfo[i].mountpoint);oprintf("mountpoint:%s,strlen:%u,pass shortpath:%s\n",mountinfo[i].mountpoint,strlen(mountinfo[i].mountpoint),cmd->shortpath);
+			fd_table[fd].partition=mountinfo[i].partition;
+			/**pass shortpath to fs_xx,fs-layer can not get inode,where path = mount_point/short_path */
+			cmd->shortpath=path+strlen(mountinfo[i].mountpoint);
+			oprintf("mountpoint:%s,strlen:%u,pass shortpath:%s\n",
+				mountinfo[i].mountpoint,strlen(mountinfo[i].mountpoint),cmd->shortpath);
 			break;
 		}
 		if(i==MAX_MOUNT_INFO){
@@ -116,9 +126,8 @@ int askfs(int command,
 	
 	FILE_DESC*pfd=fd_table+fd;	
 
-	//finally , command from userspace comes down here, get handled by specific file-system module such as ext/ntfs/extfat
-	
-	switch(g_dp[pfd->device][pfd->partation].sys_id){
+	//finally , command from userspace comes down here, get handled by specific file-system module such as ext/ntfs/fat
+	switch(g_dp[pfd->device][pfd->partition].sys_id){
 		case SYSID_LINUX:
 			cmd->handler_pid=FS_EXT_PID;
 			if(pcb_table[FS_EXT_PID].mod==TASKMOD_SLEEP&&pcb_table[FS_EXT_PID].msg_type==MSGTYPE_USR_ASK) SLEEP_ACTIVE(FS_EXT_PID);
@@ -131,10 +140,10 @@ int askfs(int command,
 		case SYSID_NTFS:
 			break;
 		case SYSID_EXTEND:
-			oprintf("entend partation is not partation..\n");
+			oprintf("entend partition is not partition..\n");
 			return 0;
 		default:
-			oprintf("askfs:unknown partation partition sys_id...\n");
+			oprintf("askfs:unknown partition partition sys_id...\n");
 			return 0;
 	}
 
@@ -147,8 +156,9 @@ void init_fs(void){
 
 	for(int i=0;i<MAX_CMD;i++) empty_cmds[i].command=COMMAND_NULL;
 
-	//FIXME: I didn't see the fd_table been initialized
-	for( int i = 0; i < MAX_FD ; i++) fd_table[i].device = DEVICE_NULL;
+	for(int i = 0; i < MAX_FD ; i++) fd_table[i].device = DEVICE_NULL;
+
+	for(int i = 0; i < MAX_MOUNT_INFO ; i++) mountinfo[i].device = DEVICE_NULL;
 }
 
 //TODO: faster ways might be used here to get avaliable fd ?
@@ -175,22 +185,45 @@ FS_COMMAND*is_there_cmd_wait(void){
 	return &empty_cmds[i];
 }
 
-boolean mount(char*mountpoint,short device,short partation){
-	if(device<1||device>4||partation<1||partation>15) return false;
+inline boolean is_partition_valid(short device , short partition)
+{
+    if( (device < 1 || device >(MAX_DEVICE-1)) ||
+	(partition < 1 || partition > MAX_PARTATION))
+	return false;
+
+    return true;
+}
+
+/*   we mount device/patition such as /dev/sda1 in Linux, to mountpoint 
+ *   mount information is maintained for :(1) file path validation
+ *					  (2) Ability to dispatch request to correct file system moudule via g_dp
+ *					  (3) TODO: nested mount operation ?
+ * */
+
+boolean mount(char*mountpoint,short device,short partition){
 	int i;
+	//if(device<1||device>4||partition<1||partition>15) return false;
+	if(is_partition_valid(device,partition) == false) return false;
+
 	for(i=0;i<MAX_MOUNT_INFO;i++){
 		if(mountinfo[i].device!=DEVICE_NULL) continue;
+		/*avaliable space found*/
 		strcpy(mountinfo[i].mountpoint,mountpoint);
 		mountinfo[i].device=device;
-		mountinfo[i].partation=partation;
+		mountinfo[i].partition=partition;
 		break;
 	}
-	if(i==MAX_MOUNT_INFO) return false;
+
+	if(i==MAX_MOUNT_INFO) {
+	    oprintf("error: mount points runs out\n");
+	    return false;
+	}
 
 	int tail_offset=strlen(mountpoint)-1;
 	if(mountpoint[tail_offset]=='/'){
-		mountinfo[i].mountpoint[tail_offset]=0;
-		oprintf("warning:mountpoint should not end with a '/',trip it,and it changes into '%s'\n",mountinfo[i].mountpoint);
+		mountinfo[i].mountpoint[tail_offset]='\0';
+		oprintf("warning:mountpoint should never end with a ('/') , the slash is removed,new mountpoing string '%s'\n",
+			mountinfo[i].mountpoint);
 	}
 	return true;
 }

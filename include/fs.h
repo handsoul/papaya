@@ -8,14 +8,15 @@
 typedef struct{
 	char mountpoint[MOUNTPOINT_LEN];
 	short device;
-	short partation;
+	short partition;
 }MOUNT_INFO;
+
 typedef struct{
 	union{
 		int location;
 		struct{
 			short device;
-			short partation;
+			short partition;
 		};
 	};
 	int inode;
@@ -23,9 +24,10 @@ typedef struct{
 	int seek;
 	int filesize;
 }FILE_DESC;
+
 typedef struct{
 	int command;
-	int asker;
+	int asker; // fs req caller pid.
 	int fd;
 	char* shortpath;
 	char* addr;
@@ -33,6 +35,7 @@ typedef struct{
 	int handler_pid;
 	int achieved;
 }FS_COMMAND;
+
 #define DPT_OFFSET (0x1be)
 #define SYSID_EXTEND 0X5
 #define SYSID_LINUX 0X83
@@ -45,7 +48,7 @@ typedef struct{
 	u8 start_sector;
 	u8 start_cylender;
 
-	u8 sys_id;
+	u8 sys_id;//means the fs type ID.
 	u8 end_head;
 	u8 end_sector;
 	u8 end_cylender;
@@ -54,7 +57,7 @@ typedef struct{
 	u32 count;
 }DP;
 
-char* sys_string[256];
+extern char* sys_string[256];
 FS_COMMAND*is_there_cmd_wait(void);
 int askfs(int command,
 		char* path,int flags,					/**open(char*path,int flag,int mod); */
@@ -66,10 +69,10 @@ int askfs(int command,
 
 extern FILE_DESC fd_table[MAX_FD];
 
-/**global partation information of all devices*/
+/**global partition information of all devices, a device means a standalone storage device such as sda/sdb in Linux*/
 #define MAX_DEVICE 5
 #define MAX_PARTATION 16
-DP g_dp[MAX_DEVICE][MAX_PARTATION];
+extern DP g_dp[MAX_DEVICE][MAX_PARTATION];
 
 /**device number*/
 #define DEVICE_NULL 0
@@ -79,10 +82,14 @@ DP g_dp[MAX_DEVICE][MAX_PARTATION];
 #define DEVICE_USB 4
 
 void init_fs(void);
-boolean mount(char*mountpoint,short device,short partation);
+boolean mount(char*mountpoint,short device,short partition);
 int new_fd(void);
 FS_COMMAND* new_cmd(void);
 void releasefd(int fd);
 boolean is_fd_valid(int fd, int command);
 
+/*inline function must be declared as extern in header file in c99 
+ *reference: http://www.cnblogs.com/openix/archive/2012/11/18/2775625.html
+ * */
+extern boolean is_partition_valid(short device , short partition);
 #endif
